@@ -1,0 +1,3 @@
+go clean --cache #&& go test -v -cover assetra/...
+go build -o authentication/authsvc authentication/main.go
+go build -o statesvc/statesvc statesvc/main.go
