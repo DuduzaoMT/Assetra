@@ -44,7 +44,7 @@ elif [ "$PROTO_SRC" -nt "$PB_GO" ] || [ "$PROTO_SRC" -nt "$PB_GRPC_GO" ]; then
 fi
 
 if [ "$REGEN_PROTO" = true ]; then
-    if protoc --go_out=pb --go-grpc_out=pb --proto_path=messages messages/auth.proto; then
+    if protoc --go_out=. --go-grpc_out=. --proto_path=messages messages/auth.proto; then
         echo -e "${GREEN}✓ Protobuf Go files generated in pb/${NC}"
     else
         echo -e "${RED}✗ Failed to generate protobuf Go files. Check protoc and protoc-gen-go installation.${NC}"
