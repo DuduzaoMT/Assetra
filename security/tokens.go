@@ -1,6 +1,9 @@
 package security
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
@@ -29,21 +32,22 @@ func init() {
 	}
 }
 
-func NewToken(userId string) (string, error) {
-	claims := jwt.RegisteredClaims{
-		ExpiresAt: jwt.NewNumericDate(time.Now().Add(30 * time.Minute)),
-		IssuedAt:  jwt.NewNumericDate(time.Now()),
-		NotBefore: jwt.NewNumericDate(time.Now()),
-		Issuer:    tokenIssuer,
-		Subject:   userId,
-		ID:        userId, // jti - JWT ID for token revocation
-	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(securityJWTkey)
+func NewToken(userId string, roles []string) (string, error) {
+       claims := jwt.MapClaims{
+	       "exp":    time.Now().Add(15 * time.Minute).Unix(),
+	       "iat":    time.Now().Unix(),
+	       "nbf":    time.Now().Unix(),
+	       "iss":    tokenIssuer,
+	       "sub":    userId,
+	       "roles":  roles,
+	       "jti":    userId, // JWT ID for token revocation
+       }
+       token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+       return token.SignedString(securityJWTkey)
 }
 
-func NewAccessToken(UserId string) (string,error){
-	return NewToken(UserId);
+func NewAccessToken(UserId string, roles []string) (string,error){
+	return NewToken(UserId, roles);
 }
 
 func parseJwtCallback(token *jwt.Token) (interface{}, error) {
@@ -54,16 +58,28 @@ func parseJwtCallback(token *jwt.Token) (interface{}, error) {
 }
 
 func ExtractToken(r *http.Request) (string, error) {
-	// Extract token from access_token cookie
-	cookie, err := r.Cookie("access_token")
-	if err != nil {
-		log.Println("error extracting token from cookie:", err)
+	// Extract token from Authorization header
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
 		return "", ErrInvalidToken
 	}
-	if cookie.Value == "" {
+	
+	// Expected format: "Bearer <token>"
+	const bearerPrefix = "Bearer "
+	if len(authHeader) < len(bearerPrefix) {
 		return "", ErrInvalidToken
 	}
-	return cookie.Value, nil
+	
+	if authHeader[:len(bearerPrefix)] != bearerPrefix {
+		return "", ErrInvalidToken
+	}
+	
+	token := authHeader[len(bearerPrefix):]
+	if token == "" {
+		return "", ErrInvalidToken
+	}
+	
+	return token, nil
 }
 
 func ParseToken(tokenString string) (*jwt.Token, error) {
@@ -72,6 +88,7 @@ func ParseToken(tokenString string) (*jwt.Token, error) {
 
 type TokenPayload struct {
 	UserId    string
+	Roles     []string
 	CreatedAt time.Time
 	ExpiresAt time.Time
 }
@@ -97,39 +114,76 @@ func NewTokenPayload(tokenString string) (*TokenPayload, error) {
 	if !ok || userId == "" {
 		return nil, fmt.Errorf("invalid user ID in token")
 	}
-	
+
+	// Extract roles (JWT unmarshals arrays as []interface{})
+	var roles []string
+	if rolesRaw, ok := claims["roles"].([]interface{}); ok {
+		for _, r := range rolesRaw {
+			if s, ok := r.(string); ok {
+				roles = append(roles, s)
+			}
+		}
+	}
+
 	createdAt, _ := claims["iat"].(float64)
 	expiresAt, _ := claims["exp"].(float64)
-	
+
 	return &TokenPayload{
 		UserId:    userId,
+		Roles:     roles,
 		CreatedAt: time.Unix(int64(createdAt), 0),
 		ExpiresAt: time.Unix(int64(expiresAt), 0),
 	}, nil
 }
 
-// SetAccessTokenCookie sets the access token in an httpOnly cookie
-func SetAccessTokenCookie(w http.ResponseWriter, token string, secure bool) {
+// NewRefreshToken generates a cryptographically secure random refresh token
+func NewRefreshToken() (string, error) {
+	bytes := make([]byte, 32) // 32 bytes = 256 bits
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(bytes), nil
+}
+
+// HashRefreshToken creates a SHA-256 hash of the refresh token
+func HashRefreshToken(token string) string {
+	hash := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(hash[:])
+}
+
+// SetRefreshTokenCookie sets the refresh token in an httpOnly cookie
+func SetRefreshTokenCookie(w http.ResponseWriter, token string, secure bool) {
 	http.SetCookie(w, &http.Cookie{
-		Name:     "access_token",
+		Name:     "refresh_token",
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
 		Secure:   secure, // true in production with HTTPS
 		SameSite: http.SameSiteStrictMode,
-		MaxAge:   1800, // 30 minutes
-		},
-	)
+		MaxAge:   604800, // 7 days
+	})
 }
 
-// ClearAuthCookies removes the access token cookie
+// ExtractRefreshToken reads the refresh token from the cookie
+func ExtractRefreshToken(r *http.Request) (string, error) {
+	cookie, err := r.Cookie("refresh_token")
+	if err != nil {
+		log.Println("error extracting refresh token from cookie:", err)
+		return "", errors.New("refresh token not found")
+	}
+	if cookie.Value == "" {
+		return "", errors.New("refresh token is empty")
+	}
+	return cookie.Value, nil
+}
+
+// ClearAuthCookies removes the refresh token cookie
 func ClearAuthCookies(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{
-		Name:     "access_token",
+		Name:     "refresh_token",
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
 		MaxAge:   -1,
-		},
-	)
+	})
 }
