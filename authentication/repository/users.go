@@ -6,7 +6,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/jackc/pgx/v4"
+	"github.com/jackc/pgx/v4/pgxpool"
 )
 
 const dbTimeout = 5 * time.Second
@@ -29,8 +29,8 @@ type UserRepository interface {
 }
 
 type userRepository struct {
-	// Using sqlx for better scanning capabilities
-	database *pgx.Conn
+	// Using pgxpool for concurrent access
+	database *pgxpool.Pool
 }
 
 func NewUserRepository(db db.Connection) UserRepository {
