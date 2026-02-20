@@ -1,0 +1,11 @@
+FROM alpine:latest
+WORKDIR /app
+
+RUN adduser -D app
+USER app
+
+COPY statesvc/statesvc app/statesvc
+
+EXPOSE 9001
+
+CMD ["/app/statesvc"]
