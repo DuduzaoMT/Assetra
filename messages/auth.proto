@@ -32,11 +32,22 @@ message SignInRequest {
 message SignInResponse {
     User user = 1;
     string token = 2;
+    string refresh_token = 3;
+}
+
+message RefreshTokenRequest {
+    string refresh_token = 1;
+}
+
+message RefreshTokenResponse {
+    string token = 1;
+    string refresh_token = 2;
 }
 
 service AuthService {
-    rpc SignUp(User) returns (User);
+    rpc SignUp(User) returns (SignInResponse);
     rpc SignIn(SignInRequest) returns (SignInResponse);
+    rpc RefreshToken(RefreshTokenRequest) returns (RefreshTokenResponse);
     rpc GetUser(GetUserRequest) returns (User);
     rpc ListUsers(ListUsersRequest) returns (stream User);
     rpc UpdateUser(User) returns (User);

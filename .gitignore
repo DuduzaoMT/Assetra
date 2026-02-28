@@ -4,7 +4,8 @@
 .env.*.local
 
 # Build outputs
-authsvc
+authentication/authsvc
+statesvc/statesvc
 *.pid
 
 # Go
