@@ -1,11 +1,45 @@
-FROM alpine:latest
+# Build stage - Compile Go binary
+FROM golang:1.25-alpine AS builder
+
+# Install dependencies needed for build
+RUN apk add --no-cache git
+
+# Set working directory
 WORKDIR /app
 
-RUN adduser -D app
+# Copy go.mod and go.sum first to leverage Docker cache
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build state service
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o statesvc ./statesvc/
+
+# Runtime stage - Final optimized image
+FROM alpine:3.19
+
+# Add SSL certificates and timezone data
+RUN apk --no-cache add ca-certificates tzdata
+
+# Create non-root user for security
+RUN adduser -D -s /bin/sh app
+
+# Set working directory
+WORKDIR /app
+
+# Copy binary from build stage
+COPY --from=builder /app/statesvc .
+
+# Set correct ownership
+RUN chown app:app /app/statesvc
+
+# Switch to non-root user
 USER app
 
-COPY statesvc/statesvc app/statesvc
-
+# Expose service port
 EXPOSE 9001
 
-CMD ["/app/statesvc"]
+# Command to run the application
+CMD ["./statesvc"]

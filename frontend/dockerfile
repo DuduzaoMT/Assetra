@@ -1,0 +1,49 @@
+# Build stage - Build React application
+FROM node:18-alpine AS builder
+
+# Set working directory
+WORKDIR /app
+
+# Copy package.json and package-lock.json first to leverage cache
+COPY package*.json ./
+
+# Install dependencies
+RUN npm ci --only=production --silent
+
+# Copy source code
+COPY . .
+
+# Build application for production
+RUN npm run build
+
+# Production stage - Optimized nginx server
+FROM nginx:1.25-alpine
+
+# Copy custom nginx configuration
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+
+# Copy built files from previous stage
+COPY --from=builder /app/build /usr/share/nginx/html
+
+# Create non-root user for better security
+RUN addgroup -g 1001 -S nginx-user && \
+    adduser -S nginx-user -G nginx-user
+
+# Adjust permissions
+RUN chown -R nginx-user:nginx-user /usr/share/nginx/html && \
+    chown -R nginx-user:nginx-user /var/cache/nginx && \
+    chown -R nginx-user:nginx-user /var/log/nginx && \
+    chown -R nginx-user:nginx-user /etc/nginx/conf.d
+
+# Create required directories with correct permissions
+RUN touch /var/run/nginx.pid && \
+    chown nginx-user:nginx-user /var/run/nginx.pid
+
+# Switch to non-root user
+USER nginx-user
+
+# Expose port 80
+EXPOSE 80
+
+# Command to start nginx
+CMD ["nginx", "-g", "daemon off;"]
