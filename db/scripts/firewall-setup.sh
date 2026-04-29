@@ -13,6 +13,9 @@ IF_INT="${1:-enp0s3}"
 # Internet interface (Only for updates/packages)
 IF_NET="${2:-enp0s8}"
 
+# Bastion Host / Tailscale Gateway (the only one allowed to SSH)
+# ADMIN_IP="192.168.0.X"
+
 # IPs of Kubernetes nodes (Control Plane and Worker Nodes)
 TRUSTED_IPS=(
     "192.168.0.10" # CP
@@ -71,21 +74,31 @@ iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 iptables -A INPUT -m conntrack --ctstate INVALID -j DROP
 
 # ==============================================================================
-# 5. Internet (External Interface) - Outbound only
+# 5. Internet (External Interface) - Outbound only 
+# TODO: All traffic should be routed through the gateway instead of allowing direct outbound here
 # ==============================================================================
 echo "[*] Allowing outbound traffic on $IF_NET (for apt/docker updates)..."
 iptables -A OUTPUT -o "$IF_NET" -j ACCEPT
 
 # ==============================================================================
-# 6. Internal Network (Internal Interface) - Strictly restricted
+# 6. Logging (For debug/audit)
 # ==============================================================================
+iptables -N LOGDROP || true
+iptables -A LOGDROP -m limit --limit 5/min -j LOG --log-prefix "FW-BLOCKED: " --log-level 4
+iptables -A LOGDROP -j DROP
+
+# ==============================================================================
+# 7. Internal Network (Internal Interface) - Strictly restricted
+# ==============================================================================
+
+# 7.1. Admin access (SSH through Bastion/Gateway)
+#echo "[*] Allowing exclusive SSH for Admin via $ADMIN_IP..."
+#iptables -A INPUT -i "$IF_INT" -s "$ADMIN_IP" -p tcp --dport "$SSH_PORT" -j ACCEPT
+#iptables -A OUTPUT -o "$IF_INT" -d "$ADMIN_IP" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 
 # Iterate over all cluster nodes to grant them access
 for IP in "${TRUSTED_IPS[@]}"; do
     echo "[*] Allowing access from K8s node: $IP via $IF_INT..."
-    
-    # SSH
-    iptables -A INPUT -i "$IF_INT" -s "$IP" -p tcp --dport "$SSH_PORT" -j ACCEPT
     
     # PostgreSQL
     iptables -A INPUT -i "$IF_INT" -s "$IP" -p tcp --dport "$DB_PORT" -j ACCEPT
@@ -93,22 +106,15 @@ for IP in "${TRUSTED_IPS[@]}"; do
     # Ping (ICMP Echo Request)
     iptables -A INPUT -i "$IF_INT" -s "$IP" -p icmp --icmp-type echo-request -j ACCEPT
     
-    # Allow OUTPUT ONLY for established/related traffic to these IPs
-    iptables -A OUTPUT -o "$IF_INT" -d "$IP" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 done
 
 # Block any attempt by the DB to initiate a new connection (NEW) to the internal network
 # The DB only responds to requests, it never initiates them.
 iptables -A OUTPUT -o "$IF_INT" -m conntrack --ctstate NEW -j LOGDROP
 
-# ==============================================================================
-# 7. Logging (For debug/audit)
-# ==============================================================================
-iptables -N LOGDROP || true
-iptables -A LOGDROP -m limit --limit 5/min -j LOG --log-prefix "FW-BLOCKED: " --log-level 4
-iptables -A LOGDROP -j DROP
-
+# Drop and log everything else
 iptables -A INPUT -j LOGDROP
+iptables -A OUTPUT -j LOGDROP
 
 # ==============================================================================
 # 8. Persisting Rules (Ubuntu/Debian)
